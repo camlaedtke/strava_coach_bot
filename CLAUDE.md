@@ -70,5 +70,5 @@ This is a learning project. When implementing new features:
 ## Domain Context
 - The user is a competitive road/gravel cyclist (~285W FTP, ~164 lbs, 7-15 hrs/week)
 - Training is coach-directed with structured threshold and VO2max blocks
-- Key Strava metrics: power (watts), TSS, duration, elevation, heart rate. 
+- Key Strava metrics: power (watts), TSS, duration, elevation, heart rate. But aggregate ride-level metrics aren't enough to get insights about a ride. The raw power, heart rate, and elevation data needs to be investigated. 
 - The bot should be able to answer questions like: "How was my training load this week?", "Compare my last two Lookout Mountain efforts", "Am I ready for a big weekend ride?"
