@@ -48,7 +48,7 @@ FTP = 290  # watts
 
 # Number of recent activities to fetch full stream data for.
 # Each unseen activity costs 1 Strava API call. Cache hits are free.
-STREAM_ACTIVITY_COUNT = 3
+STREAM_ACTIVITY_COUNT = 5
 
 # Cycling activity types in Strava's taxonomy.
 _CYCLING_TYPES = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBikeRide"}
