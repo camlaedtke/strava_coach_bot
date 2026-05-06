@@ -133,7 +133,7 @@ python scripts/backfill_activities.py
 ## Verify everything works
 
 - `GET http://localhost:8000/health` should return `{"status": "ok"}`
-- Send a message to your bot on Telegram — it should respond with coaching analysis
+- Send a message to your bot on Telegram. it should respond with coaching analysis
 
 ## Notes
 

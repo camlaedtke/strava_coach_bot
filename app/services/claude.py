@@ -22,7 +22,7 @@ from app.models.schemas import ConversationMessage
 
 # --- Model constant ---
 # Defined once here so changing the model only requires one edit in this file.
-CLAUDE_MODEL = "claude-sonnet-4-6"
+CLAUDE_MODEL = "claude-opus-4-7"
 
 # --- System prompt ---
 # This defines who Claude is and how it should behave for every message.

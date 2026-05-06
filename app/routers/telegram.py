@@ -86,9 +86,20 @@ async def _handle_command(text: str, telegram_user_id: int) -> str | None:
 # (just stores the token and an httpx client) so per-request construction
 # is fine. An alternative would be a module-level singleton, but that
 # makes testing harder — you'd have to patch a global object.
-async def get_bot() -> Bot:
-    """Create a Telegram Bot instance using the configured token."""
-    return Bot(token=settings.TELEGRAM_BOT_TOKEN)
+async def get_bot():
+    """
+    Yield an initialized Telegram Bot for the duration of a request.
+
+    python-telegram-bot v20+ uses an async HTTP client internally. The Bot
+    must be initialized before any API calls and shut down afterward. Using
+    it as an async context manager (`async with`) handles both automatically:
+    __aenter__ calls bot.initialize(), __aexit__ calls bot.shutdown().
+
+    FastAPI recognizes async generator dependencies (functions with `yield`)
+    and runs teardown code after the response is sent.
+    """
+    async with Bot(token=settings.TELEGRAM_BOT_TOKEN) as bot:
+        yield bot
 
 
 @router.post("/webhook")

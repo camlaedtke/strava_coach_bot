@@ -7,7 +7,7 @@ A personal AI cycling coach Telegram bot powered by Claude, integrated with Stra
 ## Tech Stack
 
 - **Backend**: Python 3.11+ with FastAPI
-- **AI**: Anthropic Claude API (claude-sonnet-4-6)
+- **AI**: Anthropic Claude API (claude-opus-4-7)
 - **Messaging**: Telegram Bot API via python-telegram-bot
 - **Data**: Strava API v3 (OAuth2)
 - **Database**: Supabase (PostgreSQL + async Python client)
@@ -105,7 +105,7 @@ Raw streams are stored alongside computed metrics so formulas can be recomputed 
 - `FTP = 290` in `coach.py` — athlete's FTP in watts; used for all zone calculations
 - `STREAM_ACTIVITY_COUNT = 5` in `coach.py` — number of recent cycling activities to fetch full stream data for (each cache miss = 1 Strava API call)
 - `HISTORY_LIMIT = 20` in `supabase.py` — conversation turns passed to Claude as context (~10 exchanges)
-- `CLAUDE_MODEL = "claude-sonnet-4-6"` in `claude.py`
+- `CLAUDE_MODEL = "claude-opus-4-7"` in `claude.py`
 
 ## Conventions
 
@@ -119,6 +119,7 @@ Raw streams are stored alongside computed metrics so formulas can be recomputed 
 - Fetch-or-cache pattern for Strava streams: check `activity_metrics` table first, only call Strava API for unseen activities
 - `asyncio.gather()` for concurrent stream fetches when multiple cache misses occur
 - Lazy singleton pattern for service clients: `supabase.py` uses async `acreate_client()` (must await inside event loop), `strava.py` uses sync `httpx.AsyncClient()` (safe at module level)
+- `get_bot()` in `telegram.py` is a FastAPI async generator dependency (`yield` inside `async with Bot(...) as bot`) — python-telegram-bot v20+ requires explicit `initialize()`/`shutdown()` lifecycle calls, and the context manager handles both; FastAPI runs teardown after the response is sent
 - Command responses (`/strava`) are NOT saved to the messages table — we don't want bot-command text in Claude's conversation context
 
 ## Environment Variables Required
