@@ -62,6 +62,13 @@ CREATE TABLE activity_metrics (
     metrics          JSONB  NOT NULL,
     created_at       TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE power_prs (
+    id               BIGSERIAL PRIMARY KEY,
+    telegram_user_id BIGINT NOT NULL UNIQUE,
+    records          JSONB  NOT NULL DEFAULT '{}',
+    updated_at       TIMESTAMPTZ DEFAULT now()
+);
 ```
 
 3. From the project settings, copy the **Project URL** and **anon/service key**
@@ -130,6 +137,16 @@ To pre-populate the metrics cache with past Strava activities so the bot has con
 python scripts/backfill_activities.py
 ```
 
+## 11. (Optional) Backfill all-time power records
+
+After the activity cache is populated, run this to compute your all-time best power for 12 durations (15s through 60m) from the cached stream data. No Strava API calls needed — reads from the local cache.
+
+```bash
+python scripts/backfill_power_prs.py
+```
+
+Once populated, the power records are injected into every Claude system prompt so the bot can contextualize current efforts against your lifetime bests.
+
 ## Verify everything works
 
 - `GET http://localhost:8000/health` should return `{"status": "ok"}`
@@ -138,4 +155,4 @@ python scripts/backfill_activities.py
 ## Notes
 
 - The ngrok URL changes on each restart (unless you have a paid ngrok account). When it changes, update `STRAVA_REDIRECT_URI` in `.env`, update the callback domain in your Strava app settings, and re-run the webhook registration in step 8.
-- `FTP` is hardcoded to `290` in `app/services/coach.py`. update this to match your current FTP.
+- `FTP` is hardcoded in `app/services/coach.py`. Update it to match your current FTP — zone boundaries and W/kg values in the prompt update automatically.

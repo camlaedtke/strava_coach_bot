@@ -208,21 +208,26 @@ def compute_power_duration_curve(watts: list[float]) -> dict[str, float | None]:
     """
     Compute the best average power for key durations: 5s, 1m, 5m, 20m, 60m.
 
-    These five points sketch the athlete's power profile:
-      - 5s:  neuromuscular / sprint peak
-      - 1m:  anaerobic capacity
-      - 5m:  VO2max (MAP proxy)
-      - 20m: lactate threshold proxy (often used to estimate FTP as 95% × 20m)
-      - 60m: true sustained threshold
+    These points sketch the athlete's full power profile from sprint to sustained
+    threshold. The five "anchor" durations (5s, 1m, 5m, 20m, 60m) are displayed
+    per-activity; all 13 are stored and used for all-time PR tracking.
 
     Returns None for each duration where the ride is shorter than the window.
     """
     durations = [
-        ("5s",  5),
-        ("1m",  60),
-        ("5m",  300),
-        ("20m", 1200),
-        ("60m", 3600),
+        ("5s",   5),
+        ("15s",  15),
+        ("30s",  30),
+        ("1m",   60),
+        ("2m",   120),
+        ("3m",   180),
+        ("5m",   300),
+        ("10m",  600),
+        ("15m",  900),
+        ("20m",  1200),
+        ("30m",  1800),
+        ("45m",  2700),
+        ("60m",  3600),
     ]
     return {label: _best_average_power(watts, secs) for label, secs in durations}
 
@@ -392,7 +397,11 @@ def compute_activity_metrics(streams: dict[str, list], ftp: float) -> ActivityMe
     pdc = (
         compute_power_duration_curve(watts)
         if watts
-        else {"5s": None, "1m": None, "5m": None, "20m": None, "60m": None}
+        else {
+            "5s": None, "15s": None, "30s": None, "1m": None, "2m": None,
+            "3m": None, "5m": None, "10m": None, "15m": None, "20m": None,
+            "30m": None, "45m": None, "60m": None,
+        }
     )
 
     # HR decoupling (requires both power and HR)

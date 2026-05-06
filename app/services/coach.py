@@ -41,10 +41,13 @@ from app.services import supabase as supabase_service
 # Constants
 # ---------------------------------------------------------------------------
 
-# Athlete's FTP — used for zone calculations in metrics.py.
-# Stored here (not in metrics.py) because it's coaching context, not math.
-# Update this as FTP improves.
-FTP = 290  # watts
+# Athlete's FTP — used for zone calculations in metrics.py and to build the
+# system prompt. Stored here (not in metrics.py) because it's coaching context.
+# Update this as FTP improves; all zone boundaries and W/kg values update automatically.
+FTP = 293  # watts
+
+# Athlete body weight — used for W/kg calculations in both the prompt and formatters.
+WEIGHT_KG = 74  # kg
 
 # Number of recent activities to fetch full stream data for.
 # Each unseen activity costs 1 Strava API call. Cache hits are free.
@@ -65,11 +68,11 @@ _CYCLING_TYPES = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBik
 # they need to reach ~1024 tokens for Anthropic's cache_control to activate.
 # As this profile grows (coaching philosophy, injury notes, target events),
 # it will cross that threshold and cache hits will reduce cost by ~90%.
-ATHLETE_PROFILE = """You are an expert cycling coach and training advisor. \
+ATHLETE_PROFILE = f"""You are an expert cycling coach and training advisor. \
 Your athlete is a competitive road and gravel cyclist with the following profile:
 
-- FTP: ~290 watts (constantly improving — treat this as approximate)
-- Body weight: ~164 lbs (74 kg) → ~3.92 W/kg at FTP
+- FTP: ~{FTP} watts (constantly improving — treat this as approximate)
+- Body weight: ~164 lbs ({WEIGHT_KG} kg) → ~{FTP / WEIGHT_KG:.2f} W/kg at FTP
 - Weekly training: 7–15 hours depending on the block
 - Training style: coach-directed with structured threshold and VO2max blocks
 - Goals: performance in road and gravel events
@@ -83,13 +86,13 @@ data provided in this prompt and give actionable feedback.
 - Use plain language. Avoid jargon unless the athlete uses it first.
 - If you don't have enough information to give a confident answer, say so and \
 ask a clarifying question.
-- Zone reference (Coggan 6-zone, based on ~290W FTP):
-    Z1 (Recovery):   < 160W  (< 55% FTP)
-    Z2 (Endurance):  160–218W  (55–75%)
-    Z3 (Tempo):      218–261W  (75–90%)
-    Z4 (Threshold):  261–305W  (90–105%)
-    Z5 (VO2max):     305–348W  (105–120%)
-    Z6 (Anaerobic):  > 348W   (> 120%)
+- Zone reference (Coggan 6-zone, based on {FTP}W FTP):
+    Z1 (Recovery):   < {round(FTP * 0.55)}W  (< 55% FTP)
+    Z2 (Endurance):  {round(FTP * 0.55)}–{round(FTP * 0.75)}W  (55–75%)
+    Z3 (Tempo):      {round(FTP * 0.75)}–{round(FTP * 0.90)}W  (75–90%)
+    Z4 (Threshold):  {round(FTP * 0.90)}–{round(FTP * 1.05)}W  (90–105%)
+    Z5 (VO2max):     {round(FTP * 1.05)}–{round(FTP * 1.20)}W  (105–120%)
+    Z6 (Anaerobic):  > {round(FTP * 1.20)}W   (> 120%)
 """
 
 
@@ -142,7 +145,7 @@ def _format_activity(activity: StravaActivitySummary) -> str:
 
     power_parts = []
     if activity.average_watts is not None:
-        w_per_kg = activity.average_watts / 74.0
+        w_per_kg = activity.average_watts / WEIGHT_KG
         power_parts.append(f"Avg Power: {activity.average_watts:.0f}W ({w_per_kg:.2f} W/kg)")
     if activity.weighted_average_watts is not None:
         power_parts.append(f"NP (Strava est.): {activity.weighted_average_watts}W")
@@ -182,7 +185,7 @@ def _format_rich_activity(
     # Power line: avg + NP + VI
     power_parts = []
     if activity.average_watts is not None:
-        w_per_kg = activity.average_watts / 74.0
+        w_per_kg = activity.average_watts / WEIGHT_KG
         power_parts.append(f"Avg Power: {activity.average_watts:.0f}W ({w_per_kg:.2f} W/kg)")
     if metrics.normalized_power is not None:
         power_parts.append(f"NP: {metrics.normalized_power:.0f}W")
@@ -241,6 +244,27 @@ def _format_rich_activity(
 
 
 # ---------------------------------------------------------------------------
+# Power PR formatter
+# ---------------------------------------------------------------------------
+
+# 5s is intentionally omitted — sprint peaks vary wildly by ride type and are
+# less meaningful as an all-time record compared to sustained-effort durations.
+_PR_LABELS = [
+    "15s", "30s", "1m", "2m", "3m", "5m", "10m", "15m", "20m", "30m", "45m", "60m"
+]
+
+
+def _format_power_prs(prs: dict) -> str:
+    """Format all-time power PRs as a compact line for the system prompt."""
+    parts = [
+        f"{label}: {prs[label]:.0f}W"
+        for label in _PR_LABELS
+        if label in prs and prs[label] is not None
+    ]
+    return " | ".join(parts) if parts else "(no power data yet)"
+
+
+# ---------------------------------------------------------------------------
 # Training context builder
 # ---------------------------------------------------------------------------
 
@@ -271,18 +295,21 @@ def _build_training_context(
     return "\n\n".join(formatted)
 
 
-def _build_system_prompt(training_context: str | None) -> str:
+def _build_system_prompt(training_context: str | None, power_prs: dict | None) -> str:
     """
-    Assemble the full system prompt: static athlete profile + dynamic training data.
+    Assemble the full system prompt: static athlete profile + PRs + dynamic training data.
     """
+    prompt = ATHLETE_PROFILE
+    if power_prs:
+        prompt += "\n\n## All-Time Power Records\n" + _format_power_prs(power_prs)
     if training_context is not None:
         return (
-            ATHLETE_PROFILE
+            prompt
             + "\n\n## Recent Training (last 10 cycling activities)\n\n"
             + training_context
         )
     return (
-        ATHLETE_PROFILE
+        prompt
         + "\n\n(Strava is not connected or data is temporarily unavailable. "
         "Answer general coaching questions as best you can without specific "
         "activity data.)"
@@ -317,6 +344,7 @@ async def get_coaching_reply(
         history: Prior conversation turns from Supabase (oldest-first).
     """
     training_context: str | None = None
+    power_prs: dict | None = None
 
     try:
         raw_activities = await get_recent_activities(
@@ -385,8 +413,13 @@ async def get_coaching_reply(
                     streams=result,
                     metrics=computed,
                 )
+                await supabase_service.upsert_power_prs(
+                    telegram_user_id=telegram_user_id,
+                    new_prs=computed.power_duration_curve,
+                )
 
         training_context = _build_training_context(activities, metrics_by_id)
+        power_prs = await supabase_service.get_power_prs(telegram_user_id)
 
     except ValueError:
         # User hasn't completed the Strava OAuth flow yet.
@@ -398,7 +431,7 @@ async def get_coaching_reply(
     except Exception as e:
         print(f"coach: unexpected error for user {telegram_user_id}: {e}")
 
-    system_prompt = _build_system_prompt(training_context)
+    system_prompt = _build_system_prompt(training_context, power_prs)
 
     return await get_claude_reply(
         user_message=user_message,

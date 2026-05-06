@@ -24,40 +24,6 @@ from app.models.schemas import ConversationMessage
 # Defined once here so changing the model only requires one edit in this file.
 CLAUDE_MODEL = "claude-opus-4-7"
 
-# --- System prompt ---
-# This defines who Claude is and how it should behave for every message.
-# It's a module-level constant because it never changes between requests —
-# the same cyclist profile applies to every conversation turn.
-#
-# PROMPT CACHING NOTE: The cache_control annotation on this block (see
-# get_claude_reply below) tells Anthropic to cache everything up to this point
-# for ~5 minutes. Cache hits are billed at ~10% of normal input token cost.
-#
-# However, caching only activates when the cached content is >= 1024 tokens.
-# This prompt is currently ~120 tokens, so caching won't fire yet. To activate
-# it, expand the prompt (e.g. add a detailed coaching philosophy section) until
-# it crosses that threshold. The annotation is harmless in the meantime — it's
-# forward-compatible scaffolding that will "just work" once the prompt is large
-# enough.
-SYSTEM_PROMPT = """You are an expert cycling coach and training advisor. \
-Your athlete is a competitive road and gravel cyclist with the following profile:
-
-- FTP: ~285 watts
-- Body weight: ~164 lbs (74 kg)
-- Weekly training: 7–15 hours depending on the block
-- Training style: coach-directed with structured threshold and VO2max blocks
-- Goals: performance in road and gravel events
-
-When answering questions:
-- Be specific and data-driven. Reference watts, TSS, duration, and W/kg where relevant.
-- Keep replies concise but complete — this is a Telegram chat, not a report.
-- If the athlete asks about a recent ride or training week, interpret the data they \
-provide and give actionable feedback.
-- Use plain language. Avoid jargon unless the athlete uses it first.
-- If you don't have enough information to give a confident answer, say so and \
-ask a clarifying question.
-"""
-
 # --- Module-level client singleton ---
 # AsyncAnthropic manages an httpx connection pool internally. Creating it once
 # here means every call to get_claude_reply() reuses those pooled connections
@@ -91,11 +57,9 @@ async def get_claude_reply(
             Each item is a ConversationMessage with role ("user"/"assistant")
             and content. If None or empty, behaves like the original stateless
             version — just the single current message is sent to Claude.
-        system_prompt: Optional override for the system prompt. When provided
-            (typically by coach.py with athlete profile + recent Strava data
-            injected), this replaces the static SYSTEM_PROMPT constant. When
-            None, falls back to SYSTEM_PROMPT — preserving backward compatibility
-            for any code that calls this function directly without a prompt.
+        system_prompt: The system prompt to use. Built by coach.py with the
+            athlete profile + recent Strava data injected. If None, Claude
+            receives an empty system prompt and replies without a persona.
 
     Returns:
         Claude's reply as a plain string, ready to send back to Telegram.
@@ -116,7 +80,7 @@ async def get_claude_reply(
 
     # Use the caller-supplied prompt when provided (e.g. coach.py injects
     # recent Strava data), otherwise fall back to the static constant.
-    active_prompt = system_prompt or SYSTEM_PROMPT
+    active_prompt = system_prompt or ""
 
     try:
         # messages.create is the core Anthropic API call.

@@ -37,7 +37,8 @@ strava-coach-bot/
 │   └── models/
 │       └── schemas.py    # Pydantic models for Telegram, Strava, and DB data
 └── scripts/
-    └── backfill_activities.py  # One-time script to backfill historical activity metrics
+    ├── backfill_activities.py  # One-time script to backfill historical activity metrics
+    └── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams
 ```
 
 No `tests/` directory exists yet.
@@ -47,6 +48,7 @@ No `tests/` directory exists yet.
 - `uvicorn app.main:app --reload` — Start dev server
 - `pip install -r requirements.txt` — Install dependencies
 - `python scripts/backfill_activities.py` — Backfill historical Strava activities into cache
+- `python scripts/backfill_power_prs.py` — Compute all-time power PRs from cached streams (run after backfill_activities.py)
 - `docker build -t strava-coach-bot .` — Build container (later)
 
 ## API Endpoints
@@ -59,7 +61,7 @@ No `tests/` directory exists yet.
 
 ## Supabase Schema
 
-All four tables must exist (run once in Supabase SQL editor):
+All five tables must exist (run once in Supabase SQL editor):
 
 ```sql
 CREATE TABLE users (
@@ -96,13 +98,23 @@ CREATE TABLE activity_metrics (
     metrics          JSONB  NOT NULL,           -- computed ActivityMetrics dict
     created_at       TIMESTAMPTZ DEFAULT now()
 );
+
+CREATE TABLE power_prs (
+    id               BIGSERIAL PRIMARY KEY,
+    telegram_user_id BIGINT NOT NULL UNIQUE,
+    records          JSONB  NOT NULL DEFAULT '{}',  -- all-time best watts per duration label
+    updated_at       TIMESTAMPTZ DEFAULT now()
+);
 ```
 
 Raw streams are stored alongside computed metrics so formulas can be recomputed without re-fetching from Strava.
 
+`power_prs.records` is a JSONB dict mapping duration labels to best watts (e.g. `{"15s": 720.0, "1m": 580.0, ...}`). Updated automatically whenever a new activity is cached; JSONB schema allows adding new durations without a migration.
+
 ## Key Constants
 
-- `FTP = 290` in `coach.py` — athlete's FTP in watts; used for all zone calculations
+- `FTP = 293` in `coach.py` — athlete's FTP in watts; used for all zone calculations
+- `WEIGHT_KG = 74` in `coach.py` — athlete body weight; used for W/kg calculations
 - `STREAM_ACTIVITY_COUNT = 5` in `coach.py` — number of recent cycling activities to fetch full stream data for (each cache miss = 1 Strava API call)
 - `HISTORY_LIMIT = 20` in `supabase.py` — conversation turns passed to Claude as context (~10 exchanges)
 - `CLAUDE_MODEL = "claude-opus-4-7"` in `claude.py`
@@ -148,7 +160,7 @@ This is a learning project. When implementing new features:
 
 ### Athlete Profile
 
-- Competitive road/gravel cyclist, ~280-310W FTP (constantly improving, so exact value is in flux). Assume 290W for now (`FTP = 290` constant in `coach.py`). Weight ~164 lbs (74 kg), 7–15 hrs/week
+- Competitive road/gravel cyclist, ~280-310W FTP (constantly improving, so exact value is in flux). Current value is `FTP = 293` in `coach.py`. Weight ~164 lbs (74 kg), 7–15 hrs/week
 - Training is coach-directed with structured threshold and VO2max blocks
 - Goals: performance in road and gravel events
 
@@ -164,8 +176,10 @@ surged repeatedly in Z5/Z6 and coasted in Z1.
   VI > 1.05 on a flat ride suggests poor pacing.
 - **Time in zones** — seconds spent in each of Z1–Z6 (Coggan 6-zone model), calculated
   from the raw watts stream. Much more informative than average power alone.
-- **Power duration curve** — best average power for 5s, 1m, 5m, 20m, 60m using O(n)
-  sliding window sums.
+- **Power duration curve** — best average power for 13 durations (5s, 15s, 30s, 1m, 2m,
+  3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m) using O(n) sliding window sums. The 5 "anchor"
+  durations (5s, 1m, 5m, 20m, 60m) are displayed per-activity in the coach prompt; all 13
+  are stored and used for all-time PR tracking.
 - **HR decoupling** — compares the power:HR efficiency ratio in the first half of the ride
   vs. the second half. > ~5% indicates aerobic drift.
 - **Climb segments** — sections where `grade_smooth` stays above 4% for >= 60 seconds,
@@ -192,6 +206,19 @@ Computed metrics and raw streams are stored in the `activity_metrics` Supabase t
 on first fetch. Subsequent messages use cached metrics — no Strava API call needed for
 seen activities. The backfill script (`scripts/backfill_activities.py`) pre-populates
 the cache for historical activities.
+
+### All-Time Power Records (PRs)
+
+Whenever a new activity is cached, `coach.py` calls `supabase.upsert_power_prs()` with
+the activity's power duration curve. The function fetches the current `power_prs` row,
+takes the max for each duration, and upserts the result — so records can only improve,
+never regress. On every request, the current PRs are fetched and injected into the system
+prompt as an "All-Time Power Records" section so Claude can contextualize current efforts
+against lifetime bests.
+
+`scripts/backfill_power_prs.py` populates the initial `power_prs` row by reading raw
+stream data from the `activity_metrics` cache (no Strava API calls). Run it once after
+`backfill_activities.py`.
 
 ### Bot Commands
 

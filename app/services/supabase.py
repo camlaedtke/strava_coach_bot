@@ -377,6 +377,72 @@ async def save_activity_metrics(
     )
 
 
+# ---------------------------------------------------------------------------
+# Power PR storage
+# ---------------------------------------------------------------------------
+# All-time best power records across all activities. Stored as a single JSONB
+# dict per user — keys are duration labels ("15s", "1m", etc.), values are
+# best average watts (float). Updated whenever a new activity is cached.
+
+async def get_power_prs(telegram_user_id: int) -> dict | None:
+    """
+    Return the athlete's all-time power PRs dict, or None if no record exists yet.
+
+    The returned dict maps duration labels to best watts:
+      {"15s": 720.0, "30s": 660.0, "1m": 580.0, ...}
+    """
+    client = await _get_client()
+    response = (
+        await client.table("power_prs")
+        .select("records")
+        .eq("telegram_user_id", telegram_user_id)
+        .limit(1)
+        .execute()
+    )
+    if not response.data:
+        return None
+    return response.data[0]["records"]
+
+
+async def upsert_power_prs(
+    telegram_user_id: int,
+    new_prs: dict[str, float | None],
+) -> None:
+    """
+    Update all-time power PRs, keeping the max value for each duration.
+
+    Fetches current records, merges new_prs by taking the max for each label,
+    then upserts the merged result. None values in new_prs are skipped — a ride
+    shorter than a given duration window never overwrites an existing PR with None.
+
+    Args:
+        telegram_user_id: The athlete's Telegram user ID.
+        new_prs: Dict of duration label → best watts for a single activity.
+                 Typically computed.power_duration_curve from metrics.py.
+    """
+    current = await get_power_prs(telegram_user_id) or {}
+    merged = dict(current)
+    for label, watts in new_prs.items():
+        if watts is None:
+            continue
+        if label not in merged or merged[label] is None or watts > merged[label]:
+            merged[label] = round(watts, 1)
+
+    client = await _get_client()
+    await (
+        client.table("power_prs")
+        .upsert(
+            {
+                "telegram_user_id": telegram_user_id,
+                "records": merged,
+                "updated_at": "now()",
+            },
+            on_conflict="telegram_user_id",
+        )
+        .execute()
+    )
+
+
 async def update_strava_tokens(
     telegram_user_id: int,
     access_token: str,
