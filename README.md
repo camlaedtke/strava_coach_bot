@@ -5,7 +5,7 @@ A personal AI cycling coach Telegram bot powered by Claude, integrated with Stra
 ## Prerequisites
 
 - Python 3.11+
-- [ngrok](https://ngrok.com/) (for local development — Telegram needs a public HTTPS URL to deliver webhooks)
+- [ngrok](https://ngrok.com/) (for local development. Telegram needs a public HTTPS URL to deliver webhooks)
 - Accounts and API credentials for: Telegram, Anthropic, Strava, Supabase
 
 ## 1. Clone and install dependencies
@@ -20,7 +20,7 @@ pip install -r requirements.txt
 
 1. Open Telegram and message [@BotFather](https://t.me/botfather)
 2. Send `/newbot` and follow the prompts
-3. Copy the bot token — you'll need it for `TELEGRAM_BOT_TOKEN`
+3. Copy the bot token. you'll need it for `TELEGRAM_BOT_TOKEN`
 
 ## 3. Create a Supabase project
 
@@ -69,7 +69,7 @@ CREATE TABLE activity_metrics (
 ## 4. Create a Strava API application
 
 1. Go to [strava.com/settings/api](https://www.strava.com/settings/api) and create an app
-2. Set **Authorization Callback Domain** to your ngrok domain (e.g. `abc123.ngrok.io`) — update this whenever your ngrok URL changes
+2. Set **Authorization Callback Domain** to your ngrok domain (e.g. `abc123.ngrok.io`). update this whenever your ngrok URL changes
 3. Copy the **Client ID** and **Client Secret**
 
 ## 5. Configure environment variables
@@ -138,4 +138,4 @@ python scripts/backfill_activities.py
 ## Notes
 
 - The ngrok URL changes on each restart (unless you have a paid ngrok account). When it changes, update `STRAVA_REDIRECT_URI` in `.env`, update the callback domain in your Strava app settings, and re-run the webhook registration in step 8.
-- `FTP` is hardcoded to `290` in `app/services/coach.py` — update this to match your current FTP.
+- `FTP` is hardcoded to `290` in `app/services/coach.py`. update this to match your current FTP.

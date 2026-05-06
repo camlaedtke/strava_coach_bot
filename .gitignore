@@ -221,3 +221,4 @@ __marimo__/
 # Other
 # macOS system files
 .DS_Store
+.env.prod
