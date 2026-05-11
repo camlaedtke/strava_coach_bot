@@ -11,13 +11,14 @@ A personal AI cycling coach Telegram bot powered by Claude, integrated with Stra
 - **Messaging**: Telegram Bot API via python-telegram-bot
 - **Data**: Strava API v3 (OAuth2)
 - **Database**: Supabase (PostgreSQL + async Python client)
-- **Future**: Docker containerization, GCP Cloud Run deployment
+- **Deployment**: Docker (Dockerfile in project root) + GCP Cloud Run (us-central1, project `strava-coach-bot`)
 
 ## Project Structure
 
 ```
 strava-coach-bot/
 ├── CLAUDE.md
+├── Dockerfile            # Cloud Run container definition
 ├── requirements.txt
 ├── .env                  # API keys (never commit)
 ├── .gitignore
@@ -38,7 +39,7 @@ strava-coach-bot/
 │       └── schemas.py    # Pydantic models for Telegram, Strava, and DB data
 └── scripts/
     ├── backfill_activities.py  # One-time script to backfill historical activity metrics
-    └── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams
+    └── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams (accepts --env-file)
 ```
 
 No `tests/` directory exists yet.
@@ -49,7 +50,9 @@ No `tests/` directory exists yet.
 - `pip install -r requirements.txt` — Install dependencies
 - `python scripts/backfill_activities.py` — Backfill historical Strava activities into cache
 - `python scripts/backfill_power_prs.py` — Compute all-time power PRs from cached streams (run after backfill_activities.py)
-- `docker build -t strava-coach-bot .` — Build container (later)
+- `python scripts/backfill_power_prs.py --env-file .env.prod` — Same, targeting prod Supabase
+- `gcloud builds submit --tag us-central1-docker.pkg.dev/strava-coach-bot/strava-coach-bot/strava-coach-bot:latest --project strava-coach-bot` — Build and push image
+- `gcloud run deploy strava-coach-bot --image us-central1-docker.pkg.dev/strava-coach-bot/strava-coach-bot/strava-coach-bot:latest --region us-central1 --platform managed --project strava-coach-bot` — Deploy to Cloud Run
 
 ## API Endpoints
 
@@ -179,7 +182,9 @@ surged repeatedly in Z5/Z6 and coasted in Z1.
 - **Power duration curve** — best average power for 13 durations (5s, 15s, 30s, 1m, 2m,
   3m, 5m, 10m, 15m, 20m, 30m, 45m, 60m) using O(n) sliding window sums. The 5 "anchor"
   durations (5s, 1m, 5m, 20m, 60m) are displayed per-activity in the coach prompt; all 13
-  are stored and used for all-time PR tracking.
+  are stored in the `activity_metrics` cache. For all-time PR tracking, 12 durations are
+  used — `5s` is intentionally excluded because sprint peaks vary too much by ride type to
+  be meaningful as a lifetime record (`_PR_LABELS` in `coach.py`).
 - **HR decoupling** — compares the power:HR efficiency ratio in the first half of the ride
   vs. the second half. > ~5% indicates aerobic drift.
 - **Climb segments** — sections where `grade_smooth` stays above 4% for >= 60 seconds,
@@ -218,7 +223,8 @@ against lifetime bests.
 
 `scripts/backfill_power_prs.py` populates the initial `power_prs` row by reading raw
 stream data from the `activity_metrics` cache (no Strava API calls). Run it once after
-`backfill_activities.py`.
+`backfill_activities.py`. Accepts `--env-file <path>` to target a different environment
+(e.g. `--env-file .env.prod`); defaults to `.env`.
 
 ### Bot Commands
 

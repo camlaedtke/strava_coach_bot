@@ -8,15 +8,35 @@ for all 12 PR durations, and upserts the all-time maxima into the power_prs tabl
 Run once after creating the power_prs table in Supabase:
     python scripts/backfill_power_prs.py
 
+Point at prod Supabase:
+    python scripts/backfill_power_prs.py --env-file .env.prod
+
 Re-running is safe: the final upsert overwrites the existing record with the same data.
 """
 
-import asyncio
+# argparse + dotenv MUST run before any app.* import.
+# app.config instantiates Settings() at import time, which is when pydantic-settings
+# reads the .env file. By that point it's too late to inject new values via argparse.
+# Calling load_dotenv(override=True) first puts values into os.environ, which
+# pydantic-settings always reads with higher precedence than its own env_file.
+import argparse
 import sys
 from pathlib import Path
+from dotenv import load_dotenv
+
+parser = argparse.ArgumentParser(description="Backfill all-time power PRs from cached streams.")
+parser.add_argument(
+    "--env-file",
+    default=".env",
+    help="Path to the .env file to load (default: .env)",
+)
+args = parser.parse_args()
+load_dotenv(args.env_file, override=True)
+
+import asyncio  # noqa: E402 — imports below are intentionally after dotenv load
 
 sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
-import app.config  # noqa: F401
+import app.config  # noqa: F401, E402
 
 from app.services import supabase as supabase_service
 from app.services.metrics import _best_average_power
@@ -43,6 +63,13 @@ PAGE_SIZE = 25
 
 
 async def main() -> None:
+    # Sanity-check: print which Supabase project we're writing to before any writes.
+    # Shows only the subdomain (e.g. "abcdefghijkl") — never the key.
+    supabase_url = app.config.settings.SUPABASE_URL
+    subdomain = supabase_url.split("//")[-1].split(".")[0] if supabase_url else "(not set)"
+    print(f"Supabase project: {subdomain}  ({supabase_url})")
+    print(f"Env file: {args.env_file}\n")
+
     # Step 1: Find telegram_user_id (single-user bot — take the only row)
     client = await supabase_service._get_client()
     result = (

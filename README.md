@@ -145,6 +145,14 @@ After the activity cache is populated, run this to compute your all-time best po
 python scripts/backfill_power_prs.py
 ```
 
+To run against a different environment (e.g. prod), pass `--env-file`:
+
+```bash
+python scripts/backfill_power_prs.py --env-file .env.prod
+```
+
+The script prints the Supabase project subdomain at startup so you can confirm which environment you're writing to before any data is written.
+
 Once populated, the power records are injected into every Claude system prompt so the bot can contextualize current efforts against your lifetime bests.
 
 ## Verify everything works
