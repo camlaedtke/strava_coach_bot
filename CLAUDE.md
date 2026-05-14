@@ -39,7 +39,9 @@ strava-coach-bot/
 │       └── schemas.py    # Pydantic models for Telegram, Strava, and DB data
 └── scripts/
     ├── backfill_activities.py  # One-time script to backfill historical activity metrics
-    └── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams (accepts --env-file)
+    ├── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams (accepts --env-file)
+    ├── setup_secrets.sh        # One-time: create Secret Manager secret containers (idempotent, no values)
+    └── deploy.sh               # Build image + deploy to Cloud Run with --set-secrets and --set-env-vars
 ```
 
 No `tests/` directory exists yet.
@@ -51,8 +53,41 @@ No `tests/` directory exists yet.
 - `python scripts/backfill_activities.py` — Backfill historical Strava activities into cache
 - `python scripts/backfill_power_prs.py` — Compute all-time power PRs from cached streams (run after backfill_activities.py)
 - `python scripts/backfill_power_prs.py --env-file .env.prod` — Same, targeting prod Supabase
-- `gcloud builds submit --tag us-central1-docker.pkg.dev/strava-coach-bot/strava-coach-bot/strava-coach-bot:latest --project strava-coach-bot` — Build and push image
-- `gcloud run deploy strava-coach-bot --image us-central1-docker.pkg.dev/strava-coach-bot/strava-coach-bot/strava-coach-bot:latest --region us-central1 --platform managed --project strava-coach-bot` — Deploy to Cloud Run
+- `bash scripts/setup_secrets.sh` — One-time: create Secret Manager secret containers (run before first deploy; idempotent)
+- `bash scripts/deploy.sh` — Build image and deploy to Cloud Run (handles secrets + env vars)
+
+## Secret Management
+
+Credentials are split into two tiers:
+
+**Tier 1 — Secret Manager (sensitive credentials)**
+Stored as versioned secrets in GCP Secret Manager and mounted as env vars at Cloud Run deploy time via `--set-secrets` in `scripts/deploy.sh`. Never written to the deploy command line, scripts, or logs.
+
+| Secret name | What it is |
+| --- | --- |
+| `ANTHROPIC_API_KEY` | Anthropic API key |
+| `TELEGRAM_BOT_TOKEN` | Telegram bot token from BotFather |
+| `STRAVA_CLIENT_SECRET` | Strava OAuth2 client secret |
+| `SUPABASE_KEY` | Supabase anon/service key |
+
+**Tier 2 — Plain env vars (non-sensitive config)**
+Set directly on the Cloud Run service via `--set-env-vars` in `scripts/deploy.sh`. Non-credentials; safe to commit in the deploy script.
+
+| Variable | What it is |
+| --- | --- |
+| `SUPABASE_URL` | Supabase project endpoint URL |
+| `STRAVA_CLIENT_ID` | Strava OAuth app identifier (public) |
+| `STRAVA_REDIRECT_URI` | OAuth callback URL |
+
+**How to rotate a secret:**
+
+1. Add a new version: `printf '%s' 'new-value' | gcloud secrets versions add SECRET_NAME --data-file=- --project=strava-coach-bot`
+2. Redeploy: `bash scripts/deploy.sh` (`:latest` in the deploy script picks up the new version automatically)
+3. Optional: disable the old version once the new deploy is confirmed healthy
+
+**Pinning versions (production-grade):** The deploy script uses `:latest` for simplicity. For deterministic deploys where a rotation can't silently change behavior, pin to a specific version number (e.g. `SUPABASE_KEY:3`) and bump it manually after each rotation. The comment in `deploy.sh` notes where to do this.
+
+**Granting access:** The Cloud Run service account needs `roles/secretmanager.secretAccessor` on each secret. See the "BEFORE FIRST USE" comment in `scripts/deploy.sh` for the exact command.
 
 ## API Endpoints
 
@@ -196,6 +231,7 @@ pre-computed in `metrics.py` and injected as formatted text into the system prom
 ### Activity Formatting
 
 `coach.py` converts all Strava units to imperial for display (athlete's native system):
+
 - distance: meters → miles
 - elevation: meters → feet
 - moving_time: seconds → H:MM
