@@ -22,6 +22,9 @@ strava-coach-bot/
 ├── requirements.txt
 ├── .env                  # API keys (never commit)
 ├── .gitignore
+├── migrations/
+│   ├── README.md         # How to apply migrations
+│   └── 001_initial_schema.sql
 ├── app/
 │   ├── __init__.py
 │   ├── main.py           # FastAPI app entrypoint + lifespan shutdown
@@ -99,53 +102,19 @@ Set directly on the Cloud Run service via `--set-env-vars` in `scripts/deploy.sh
 
 ## Supabase Schema
 
-All five tables must exist (run once in Supabase SQL editor):
+Schema is managed via numbered SQL migration files in `migrations/`. Apply them in order
+to both dev and prod Supabase projects (paste into the Supabase SQL editor). See
+`migrations/README.md` for the full workflow.
 
-```sql
-CREATE TABLE users (
-    id               BIGSERIAL PRIMARY KEY,
-    telegram_user_id BIGINT NOT NULL UNIQUE,
-    first_name       TEXT NOT NULL,
-    username         TEXT,
-    created_at       TIMESTAMPTZ DEFAULT now()
-);
+Current tables (as of migration 001):
 
-CREATE TABLE messages (
-    id         BIGSERIAL PRIMARY KEY,
-    user_id    BIGINT NOT NULL REFERENCES users(id),
-    role       TEXT NOT NULL CHECK (role IN ('user', 'assistant')),
-    content    TEXT NOT NULL,
-    created_at TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE strava_tokens (
-    id                BIGSERIAL PRIMARY KEY,
-    telegram_user_id  BIGINT NOT NULL UNIQUE,
-    access_token      TEXT NOT NULL,
-    refresh_token     TEXT NOT NULL,
-    expires_at        BIGINT NOT NULL,   -- Unix timestamp
-    strava_athlete_id BIGINT,
-    updated_at        TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE activity_metrics (
-    id               BIGSERIAL PRIMARY KEY,
-    activity_id      BIGINT NOT NULL UNIQUE,   -- Strava activity ID (globally unique)
-    telegram_user_id BIGINT NOT NULL,
-    streams          JSONB  NOT NULL,           -- raw stream arrays from Strava
-    metrics          JSONB  NOT NULL,           -- computed ActivityMetrics dict
-    created_at       TIMESTAMPTZ DEFAULT now()
-);
-
-CREATE TABLE power_prs (
-    id               BIGSERIAL PRIMARY KEY,
-    telegram_user_id BIGINT NOT NULL UNIQUE,
-    records          JSONB  NOT NULL DEFAULT '{}',  -- all-time best watts per duration label
-    updated_at       TIMESTAMPTZ DEFAULT now()
-);
-```
-
-Raw streams are stored alongside computed metrics so formulas can be recomputed without re-fetching from Strava.
+| Table | Purpose |
+| --- | --- |
+| `users` | Telegram user identity |
+| `messages` | Conversation history passed to Claude |
+| `strava_tokens` | OAuth access/refresh tokens + athlete ID |
+| `activity_metrics` | Raw Strava streams + computed metrics cache |
+| `power_prs` | All-time best watts per duration label (JSONB) |
 
 `power_prs.records` is a JSONB dict mapping duration labels to best watts (e.g. `{"15s": 720.0, "1m": 580.0, ...}`). Updated automatically whenever a new activity is cached; JSONB schema allows adding new durations without a migration.
 
