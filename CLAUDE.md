@@ -45,8 +45,15 @@ strava-coach-bot/
 │   ├── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams (accepts --env-file)
 │   ├── setup_secrets.sh        # One-time: create Secret Manager secret containers (idempotent, no values)
 │   └── deploy.sh               # Build image + deploy to Cloud Run with --set-secrets and --set-env-vars
-└── tests/
-    └── test_metrics.py         # pytest suite for app/services/metrics.py (40 tests, no I/O)
+├── tests/
+│   └── test_metrics.py         # pytest suite for app/services/metrics.py (40 tests, no I/O)
+└── .claude/
+    ├── settings.json           # Project-level Claude Code config: registers PreToolUse hook
+    ├── hooks/
+    │   ├── guard_prod_db.py    # PreToolUse hook: blocks mutating Bash commands against prod Supabase
+    │   └── test_guard.py       # Smoke tests for guard_prod_db.py (6 cases, no I/O)
+    └── commands/
+        └── migrate.md          # /migrate slash command: applies migrations/*.sql in order
 ```
 
 ## Dev/Prod Isolation
@@ -71,6 +78,9 @@ Dev and prod are isolated across two dimensions:
 - `python scripts/backfill_power_prs.py --env-file .env.prod` — Same, targeting prod Supabase
 - `bash scripts/setup_secrets.sh` — One-time: create Secret Manager secret containers (run before first deploy; idempotent)
 - `bash scripts/deploy.sh` — Build image and deploy to Cloud Run (handles secrets + env vars)
+- `/migrate dev` — Apply all `migrations/*.sql` to dev Supabase in filename order (Claude Code slash command)
+- `/migrate prod --confirm` — Same, targeting prod Supabase (`--confirm` required)
+- `python3 .claude/hooks/test_guard.py` — Smoke-test the prod mutation guard hook (6 cases)
 
 ## Secret Management
 
@@ -116,8 +126,8 @@ Set directly on the Cloud Run service via `--set-env-vars` in `scripts/deploy.sh
 ## Supabase Schema
 
 Schema is managed via numbered SQL migration files in `migrations/`. Apply them in order
-to both dev and prod Supabase projects (paste into the Supabase SQL editor). See
-`migrations/README.md` for the full workflow.
+using `/migrate dev` (then `/migrate prod --confirm` once verified). See
+`migrations/README.md` for the full workflow and naming conventions.
 
 Current tables (as of migration 001):
 
