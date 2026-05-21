@@ -1,0 +1,16 @@
+{
+  "hooks": {
+    "PreToolUse": [
+      {
+        "matcher": "Bash",
+        "hooks": [
+          {
+            "type": "command",
+            "command": "python3 .claude/hooks/guard_prod_db.py",
+            "timeout": 10
+          }
+        ]
+      }
+    ]
+  }
+}
