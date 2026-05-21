@@ -40,14 +40,14 @@ strava-coach-bot/
 │   │   └── coach.py      # Orchestrator: fetch-or-cache streams, build prompt, call Claude
 │   └── models/
 │       └── schemas.py    # Pydantic models for Telegram, Strava, and DB data
-└── scripts/
-    ├── backfill_activities.py  # One-time script to backfill historical activity metrics
-    ├── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams (accepts --env-file)
-    ├── setup_secrets.sh        # One-time: create Secret Manager secret containers (idempotent, no values)
-    └── deploy.sh               # Build image + deploy to Cloud Run with --set-secrets and --set-env-vars
+├── scripts/
+│   ├── backfill_activities.py  # One-time script to backfill historical activity metrics
+│   ├── backfill_power_prs.py   # One-time script to compute all-time power PRs from cached streams (accepts --env-file)
+│   ├── setup_secrets.sh        # One-time: create Secret Manager secret containers (idempotent, no values)
+│   └── deploy.sh               # Build image + deploy to Cloud Run with --set-secrets and --set-env-vars
+└── tests/
+    └── test_metrics.py         # pytest suite for app/services/metrics.py (40 tests, no I/O)
 ```
-
-No `tests/` directory exists yet.
 
 ## Dev/Prod Isolation
 
@@ -65,6 +65,7 @@ Dev and prod are isolated across two dimensions:
 
 - `uvicorn app.main:app --reload` — Start dev server
 - `pip install -r requirements.txt` — Install dependencies
+- `pytest tests/ -v` — Run test suite
 - `python scripts/backfill_activities.py` — Backfill historical Strava activities into cache
 - `python scripts/backfill_power_prs.py` — Compute all-time power PRs from cached streams (run after backfill_activities.py)
 - `python scripts/backfill_power_prs.py --env-file .env.prod` — Same, targeting prod Supabase
