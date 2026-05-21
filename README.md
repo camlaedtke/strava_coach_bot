@@ -76,7 +76,7 @@ CREATE TABLE power_prs (
 ## 4. Create a Strava API application
 
 1. Go to [strava.com/settings/api](https://www.strava.com/settings/api) and create an app
-2. Set **Authorization Callback Domain** to your ngrok domain (e.g. `abc123.ngrok.io`). update this whenever your ngrok URL changes
+2. Set **Authorization Callback Domain** to `localhost` (works for local dev; update to your Cloud Run domain when deploying to production)
 3. Copy the **Client ID** and **Client Secret**
 
 ## 5. Configure environment variables
@@ -90,7 +90,7 @@ SUPABASE_URL=https://your-project.supabase.co
 SUPABASE_KEY=your_supabase_anon_key_here
 STRAVA_CLIENT_ID=your_strava_client_id
 STRAVA_CLIENT_SECRET=your_strava_client_secret
-STRAVA_REDIRECT_URI=https://your-ngrok-subdomain.ngrok.io/strava/callback
+STRAVA_REDIRECT_URI=http://localhost:8000/strava/callback
 ```
 
 ## 6. Start the server
@@ -162,5 +162,5 @@ Once populated, the power records are injected into every Claude system prompt s
 
 ## Notes
 
-- The ngrok URL changes on each restart (unless you have a paid ngrok account). When it changes, update `STRAVA_REDIRECT_URI` in `.env`, update the callback domain in your Strava app settings, and re-run the webhook registration in step 8.
+- The ngrok URL changes on each restart (unless you have a paid ngrok account). When it changes, re-run the webhook registration in step 8. Strava is unaffected — it uses `localhost` as the callback domain, which is stable.
 - `FTP` is hardcoded in `app/services/coach.py`. Update it to match your current FTP — zone boundaries and W/kg values in the prompt update automatically.

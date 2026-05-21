@@ -49,6 +49,18 @@ strava-coach-bot/
 
 No `tests/` directory exists yet.
 
+## Dev/Prod Isolation
+
+Dev and prod are isolated across two dimensions:
+
+| Dimension | Dev | Prod |
+| --- | --- | --- |
+| Telegram bot | separate bot token (`.env`) | separate bot token (Secret Manager) |
+| Database | separate Supabase project (`.env`) | separate Supabase project (Secret Manager) |
+| Strava app | **shared** — same `STRAVA_CLIENT_ID` / `STRAVA_CLIENT_SECRET` | same Strava app |
+
+**Why shared Strava app:** Strava enforces a low athlete quota on new/unapproved apps. For a single-athlete personal bot there is no benefit to a separate dev app — isolation is fully achieved by the separate Supabase project (tokens, activity cache, and PRs are all stored there). The only difference in `.env` vs Secret Manager is `STRAVA_REDIRECT_URI`: dev uses `http://localhost:8000/strava/callback`; prod uses the Cloud Run service URL.
+
 ## Commands
 
 - `uvicorn app.main:app --reload` — Start dev server
