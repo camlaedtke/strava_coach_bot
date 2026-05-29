@@ -53,7 +53,8 @@ strava-coach-bot/
     │   ├── guard_prod_db.py    # PreToolUse hook: blocks mutating Bash commands against prod Supabase
     │   └── test_guard.py       # Smoke tests for guard_prod_db.py (6 cases, no I/O)
     └── commands/
-        └── migrate.md          # /migrate slash command: applies migrations/*.sql in order
+        ├── migrate.md          # /migrate slash command: applies migrations/*.sql in order
+        └── deploy.md           # /deploy slash command: build image + deploy to Cloud Run (prod)
 ```
 
 ## Dev/Prod Isolation
@@ -80,6 +81,7 @@ Dev and prod are isolated across two dimensions:
 - `bash scripts/deploy.sh` — Build image and deploy to Cloud Run (handles secrets + env vars)
 - `/migrate dev` — Apply all `migrations/*.sql` to dev Supabase in filename order (Claude Code slash command)
 - `/migrate prod --confirm` — Same, targeting prod Supabase (`--confirm` required)
+- `/deploy --confirm` — Build Docker image via Cloud Build and deploy to Cloud Run prod (`--confirm` required)
 - `python3 .claude/hooks/test_guard.py` — Smoke-test the prod mutation guard hook (6 cases)
 
 ## Secret Management
