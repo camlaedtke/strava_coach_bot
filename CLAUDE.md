@@ -7,7 +7,7 @@ A personal AI cycling coach Telegram bot powered by Claude, integrated with Stra
 ## Tech Stack
 
 - **Backend**: Python 3.11+ with FastAPI
-- **AI**: Anthropic Claude API (claude-opus-4-7)
+- **AI**: Anthropic Claude API (claude-opus-4-8)
 - **Messaging**: Telegram Bot API via python-telegram-bot
 - **Data**: Strava API v3 (OAuth2)
 - **Database**: Supabase (PostgreSQL + async Python client)
@@ -24,7 +24,8 @@ strava-coach-bot/
 ├── .gitignore
 ├── migrations/
 │   ├── README.md         # How to apply migrations
-│   └── 001_initial_schema.sql
+│   ├── 001_initial_schema.sql
+│   └── 002_athlete_profile.sql
 ├── app/
 │   ├── __init__.py
 │   ├── main.py           # FastAPI app entrypoint + lifespan shutdown
@@ -46,7 +47,8 @@ strava-coach-bot/
 │   ├── setup_secrets.sh        # One-time: create Secret Manager secret containers (idempotent, no values)
 │   └── deploy.sh               # Build image + deploy to Cloud Run with --set-secrets and --set-env-vars
 ├── tests/
-│   └── test_metrics.py         # pytest suite for app/services/metrics.py (40 tests, no I/O)
+│   ├── test_metrics.py         # pytest suite for app/services/metrics.py (40 tests, no I/O)
+│   └── test_athlete_profile.py # pytest suite for AthleteProfile row mapping (4 tests, no I/O)
 └── .claude/
     ├── settings.json           # Project-level Claude Code config: registers PreToolUse hook
     ├── hooks/
@@ -131,7 +133,7 @@ Schema is managed via numbered SQL migration files in `migrations/`. Apply them 
 using `/migrate dev` (then `/migrate prod --confirm` once verified). See
 `migrations/README.md` for the full workflow and naming conventions.
 
-Current tables (as of migration 001):
+Current tables (as of migration 002):
 
 | Table | Purpose |
 | --- | --- |
@@ -140,16 +142,19 @@ Current tables (as of migration 001):
 | `strava_tokens` | OAuth access/refresh tokens + athlete ID |
 | `activity_metrics` | Raw Strava streams + computed metrics cache |
 | `power_prs` | All-time best watts per duration label (JSONB) |
+| `athlete_profile` | Per-user FTP (watts) and body weight (kg) for dynamic coaching context |
 
 `power_prs.records` is a JSONB dict mapping duration labels to best watts (e.g. `{"15s": 720.0, "1m": 580.0, ...}`). Updated automatically whenever a new activity is cached; JSONB schema allows adding new durations without a migration.
 
+`athlete_profile` has one row per user, created on first explicit update. Absent rows (and NULL column values) fall back to the `AthleteProfile` Pydantic defaults (`ftp_watts=293`, `weight_kg=74.0`).
+
 ## Key Constants
 
-- `FTP = 293` in `coach.py` — athlete's FTP in watts; used for all zone calculations
-- `WEIGHT_KG = 74` in `coach.py` — athlete body weight; used for W/kg calculations
+- `AthleteProfile.ftp_watts = 293` in `schemas.py` — fallback FTP in watts when no `athlete_profile` DB row exists; actual value is fetched per-request from the `athlete_profile` table
+- `AthleteProfile.weight_kg = 74.0` in `schemas.py` — fallback body weight in kg when no `athlete_profile` DB row exists; actual value is fetched per-request from the `athlete_profile` table
 - `STREAM_ACTIVITY_COUNT = 5` in `coach.py` — number of recent cycling activities to fetch full stream data for (each cache miss = 1 Strava API call)
 - `HISTORY_LIMIT = 20` in `supabase.py` — conversation turns passed to Claude as context (~10 exchanges)
-- `CLAUDE_MODEL = "claude-opus-4-7"` in `claude.py`
+- `CLAUDE_MODEL = "claude-opus-4-8"` in `claude.py`
 
 ## Conventions
 
@@ -165,6 +170,7 @@ Current tables (as of migration 001):
 - Lazy singleton pattern for service clients: `supabase.py` uses async `acreate_client()` (must await inside event loop), `strava.py` uses sync `httpx.AsyncClient()` (safe at module level)
 - `get_bot()` in `telegram.py` is a FastAPI async generator dependency (`yield` inside `async with Bot(...) as bot`) — python-telegram-bot v20+ requires explicit `initialize()`/`shutdown()` lifecycle calls, and the context manager handles both; FastAPI runs teardown after the response is sent
 - Command responses (`/strava`) are NOT saved to the messages table — we don't want bot-command text in Claude's conversation context
+- `get_athlete_profile()` is called at the start of every coaching request with a graceful fallback to `AthleteProfile()` defaults on any DB error, so the bot always stays functional even if the profile table is unreachable
 
 ## Environment Variables Required
 

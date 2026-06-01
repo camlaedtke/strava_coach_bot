@@ -22,7 +22,7 @@ from app.models.schemas import ConversationMessage
 
 # --- Model constant ---
 # Defined once here so changing the model only requires one edit in this file.
-CLAUDE_MODEL = "claude-opus-4-7"
+CLAUDE_MODEL = "claude-opus-4-8"
 
 # --- Module-level client singleton ---
 # AsyncAnthropic manages an httpx connection pool internally. Creating it once

@@ -24,6 +24,7 @@ There is no automated runner — every migration is applied manually and intenti
 | # | File | What it does |
 |---|------|--------------|
 | 001 | `001_initial_schema.sql` | Creates all five baseline tables: users, messages, strava_tokens, activity_metrics, power_prs |
+| 002 | `002_athlete_profile.sql` | Adds athlete_profile table: per-user FTP and body weight for dynamic coaching context |
 
 ## Adding a new migration
 

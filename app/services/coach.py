@@ -31,7 +31,7 @@ from datetime import datetime
 import httpx
 
 import app.services.metrics as metrics_module
-from app.models.schemas import ConversationMessage, StravaActivitySummary
+from app.models.schemas import AthleteProfile, ConversationMessage, StravaActivitySummary
 from app.services.claude import get_claude_reply
 from app.services.metrics import ActivityMetrics
 from app.services.strava import get_activity_streams, get_recent_activities, get_valid_token
@@ -40,14 +40,6 @@ from app.services import supabase as supabase_service
 # ---------------------------------------------------------------------------
 # Constants
 # ---------------------------------------------------------------------------
-
-# Athlete's FTP — used for zone calculations in metrics.py and to build the
-# system prompt. Stored here (not in metrics.py) because it's coaching context.
-# Update this as FTP improves; all zone boundaries and W/kg values update automatically.
-FTP = 293  # watts
-
-# Athlete body weight — used for W/kg calculations in both the prompt and formatters.
-WEIGHT_KG = 74  # kg
 
 # Number of recent activities to fetch full stream data for.
 # Each unseen activity costs 1 Strava API call. Cache hits are free.
@@ -58,21 +50,28 @@ _CYCLING_TYPES = {"Ride", "VirtualRide", "GravelRide", "MountainBikeRide", "EBik
 
 
 # ---------------------------------------------------------------------------
-# Athlete profile (static system prompt base)
+# Athlete profile system prompt builder
 # ---------------------------------------------------------------------------
 
-# This is the coaching persona Claude adopts for every reply.
-#
-# PROMPT CACHING: This constant is the static part of the system prompt.
-# The dynamic part (recent training data) is appended per-request. Together
-# they need to reach ~1024 tokens for Anthropic's cache_control to activate.
-# As this profile grows (coaching philosophy, injury notes, target events),
-# it will cross that threshold and cache hits will reduce cost by ~90%.
-ATHLETE_PROFILE = f"""You are an expert cycling coach and training advisor. \
+def _build_athlete_profile_text(ftp: int, weight_kg: float) -> str:
+    """
+    Build the coaching persona section of the system prompt from live profile values.
+
+    Called once per request using values fetched from the athlete_profile table
+    (falling back to AthleteProfile defaults when no row exists). Generating this
+    per-request rather than as a module constant means FTP and weight changes
+    take effect immediately without redeploying.
+
+    PROMPT CACHING: This text forms the static-ish part of the system prompt.
+    The dynamic part (recent training data) is appended per-request. Together
+    they need ~1024 tokens for Anthropic's cache_control to activate.
+    """
+    lbs = round(weight_kg * 2.20462)
+    return f"""You are an expert cycling coach and training advisor. \
 Your athlete is a competitive road and gravel cyclist with the following profile:
 
-- FTP: ~{FTP} watts (constantly improving — treat this as approximate)
-- Body weight: ~164 lbs ({WEIGHT_KG} kg) → ~{FTP / WEIGHT_KG:.2f} W/kg at FTP
+- FTP: ~{ftp} watts (constantly improving — treat this as approximate)
+- Body weight: ~{lbs} lbs ({weight_kg} kg) → ~{ftp / weight_kg:.2f} W/kg at FTP
 - Weekly training: 7–15 hours depending on the block
 - Training style: coach-directed with structured threshold and VO2max blocks
 - Goals: performance in road and gravel events
@@ -86,13 +85,13 @@ data provided in this prompt and give actionable feedback.
 - Use plain language. Avoid jargon unless the athlete uses it first.
 - If you don't have enough information to give a confident answer, say so and \
 ask a clarifying question.
-- Zone reference (Coggan 6-zone, based on {FTP}W FTP):
-    Z1 (Recovery):   < {round(FTP * 0.55)}W  (< 55% FTP)
-    Z2 (Endurance):  {round(FTP * 0.55)}–{round(FTP * 0.75)}W  (55–75%)
-    Z3 (Tempo):      {round(FTP * 0.75)}–{round(FTP * 0.90)}W  (75–90%)
-    Z4 (Threshold):  {round(FTP * 0.90)}–{round(FTP * 1.05)}W  (90–105%)
-    Z5 (VO2max):     {round(FTP * 1.05)}–{round(FTP * 1.20)}W  (105–120%)
-    Z6 (Anaerobic):  > {round(FTP * 1.20)}W   (> 120%)
+- Zone reference (Coggan 6-zone, based on {ftp}W FTP):
+    Z1 (Recovery):   < {round(ftp * 0.55)}W  (< 55% FTP)
+    Z2 (Endurance):  {round(ftp * 0.55)}–{round(ftp * 0.75)}W  (55–75%)
+    Z3 (Tempo):      {round(ftp * 0.75)}–{round(ftp * 0.90)}W  (75–90%)
+    Z4 (Threshold):  {round(ftp * 0.90)}–{round(ftp * 1.05)}W  (90–105%)
+    Z5 (VO2max):     {round(ftp * 1.05)}–{round(ftp * 1.20)}W  (105–120%)
+    Z6 (Anaerobic):  > {round(ftp * 1.20)}W   (> 120%)
 """
 
 
@@ -127,7 +126,7 @@ def _format_date(iso_str: str) -> str:
 # Activity formatting
 # ---------------------------------------------------------------------------
 
-def _format_activity(activity: StravaActivitySummary) -> str:
+def _format_activity(activity: StravaActivitySummary, weight_kg: float) -> str:
     """
     Format an activity with aggregate fields only (no stream data).
 
@@ -145,7 +144,7 @@ def _format_activity(activity: StravaActivitySummary) -> str:
 
     power_parts = []
     if activity.average_watts is not None:
-        w_per_kg = activity.average_watts / WEIGHT_KG
+        w_per_kg = activity.average_watts / weight_kg
         power_parts.append(f"Avg Power: {activity.average_watts:.0f}W ({w_per_kg:.2f} W/kg)")
     if activity.weighted_average_watts is not None:
         power_parts.append(f"NP (Strava est.): {activity.weighted_average_watts}W")
@@ -166,6 +165,7 @@ def _format_activity(activity: StravaActivitySummary) -> str:
 def _format_rich_activity(
     activity: StravaActivitySummary,
     metrics: ActivityMetrics,
+    weight_kg: float,
 ) -> str:
     """
     Format an activity with full computed metrics from stream data.
@@ -185,7 +185,7 @@ def _format_rich_activity(
     # Power line: avg + NP + VI
     power_parts = []
     if activity.average_watts is not None:
-        w_per_kg = activity.average_watts / WEIGHT_KG
+        w_per_kg = activity.average_watts / weight_kg
         power_parts.append(f"Avg Power: {activity.average_watts:.0f}W ({w_per_kg:.2f} W/kg)")
     if metrics.normalized_power is not None:
         power_parts.append(f"NP: {metrics.normalized_power:.0f}W")
@@ -271,6 +271,7 @@ def _format_power_prs(prs: dict) -> str:
 def _build_training_context(
     activities: list[StravaActivitySummary],
     metrics_by_id: dict[int, ActivityMetrics],
+    weight_kg: float,
 ) -> str:
     """
     Format all recent cycling activities into a training context block.
@@ -288,18 +289,22 @@ def _build_training_context(
     for ride in rides:
         metrics = metrics_by_id.get(ride.id)
         if metrics is not None:
-            formatted.append(_format_rich_activity(ride, metrics))
+            formatted.append(_format_rich_activity(ride, metrics, weight_kg))
         else:
-            formatted.append(_format_activity(ride))
+            formatted.append(_format_activity(ride, weight_kg))
 
     return "\n\n".join(formatted)
 
 
-def _build_system_prompt(training_context: str | None, power_prs: dict | None) -> str:
+def _build_system_prompt(
+    training_context: str | None,
+    power_prs: dict | None,
+    profile: AthleteProfile,
+) -> str:
     """
-    Assemble the full system prompt: static athlete profile + PRs + dynamic training data.
+    Assemble the full system prompt: athlete profile text + PRs + dynamic training data.
     """
-    prompt = ATHLETE_PROFILE
+    prompt = _build_athlete_profile_text(profile.ftp_watts, profile.weight_kg)
     if power_prs:
         prompt += "\n\n## All-Time Power Records\n" + _format_power_prs(power_prs)
     if training_context is not None:
@@ -343,6 +348,15 @@ async def get_coaching_reply(
         user_message: Raw text from Telegram.
         history: Prior conversation turns from Supabase (oldest-first).
     """
+    # Fetch the athlete profile early so FTP/weight are available for both
+    # metric computation and system prompt generation. Fall back to defaults
+    # on any DB error so the bot stays functional.
+    profile = AthleteProfile()
+    try:
+        profile = await supabase_service.get_athlete_profile(telegram_user_id)
+    except Exception as e:
+        print(f"coach: failed to fetch athlete profile for {telegram_user_id}: {e}")
+
     training_context: str | None = None
     power_prs: dict | None = None
 
@@ -405,7 +419,7 @@ async def get_coaching_reply(
                     continue
 
                 # Compute metrics and persist both streams and metrics
-                computed = metrics_module.compute_activity_metrics(result, ftp=FTP)
+                computed = metrics_module.compute_activity_metrics(result, ftp=profile.ftp_watts)
                 metrics_by_id[ride.id] = computed
                 await supabase_service.save_activity_metrics(
                     activity_id=ride.id,
@@ -418,7 +432,7 @@ async def get_coaching_reply(
                     new_prs=computed.power_duration_curve,
                 )
 
-        training_context = _build_training_context(activities, metrics_by_id)
+        training_context = _build_training_context(activities, metrics_by_id, profile.weight_kg)
         power_prs = await supabase_service.get_power_prs(telegram_user_id)
 
     except ValueError:
@@ -431,7 +445,7 @@ async def get_coaching_reply(
     except Exception as e:
         print(f"coach: unexpected error for user {telegram_user_id}: {e}")
 
-    system_prompt = _build_system_prompt(training_context, power_prs)
+    system_prompt = _build_system_prompt(training_context, power_prs, profile)
 
     return await get_claude_reply(
         user_message=user_message,

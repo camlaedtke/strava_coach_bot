@@ -162,6 +162,20 @@ class StravaTokenRecord(BaseModel):
     strava_athlete_id: int | None = None
 
 
+class AthleteProfile(BaseModel):
+    """
+    Per-user athlete profile sourced from the athlete_profile DB table.
+
+    Used to drive FTP-dependent calculations (zone boundaries, W/kg, NP
+    comparisons) and the system prompt text. Defaults represent the fallback
+    values used when no DB row exists for the user — they are the single
+    source of truth for those constants throughout the codebase.
+    """
+
+    ftp_watts: int = 293      # Functional Threshold Power in watts
+    weight_kg: float = 74.0   # Body weight in kilograms
+
+
 class StravaActivitySummary(BaseModel):
     """
     The subset of Strava's activity summary object that coach.py uses.

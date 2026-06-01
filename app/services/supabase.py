@@ -41,7 +41,7 @@ import dataclasses
 from supabase import acreate_client, AsyncClient
 
 from app.config import settings
-from app.models.schemas import ConversationMessage, UserRecord, StravaTokenRecord
+from app.models.schemas import AthleteProfile, ConversationMessage, UserRecord, StravaTokenRecord
 from app.services.metrics import ActivityMetrics, activity_metrics_from_dict
 
 # How many past messages to load as context for Claude.
@@ -480,3 +480,98 @@ async def update_strava_tokens(
         .eq("telegram_user_id", telegram_user_id)
         .execute()
     )
+
+
+# ---------------------------------------------------------------------------
+# Athlete profile storage
+# ---------------------------------------------------------------------------
+# Stores per-user FTP and body weight. One mutable row per user, created on
+# first explicit update. Absent rows (and NULL column values) fall back to the
+# AthleteProfile Pydantic defaults in code.
+
+def _row_to_athlete_profile(row: dict | None) -> AthleteProfile:
+    """
+    Convert a raw athlete_profile DB row to an AthleteProfile model.
+
+    Pure function (no I/O) — safe to unit-test without a live database.
+
+    None row → AthleteProfile() with all defaults.
+    Full row → populated model.
+    Partial row (NULL column values) → populated where non-NULL, defaults elsewhere.
+
+    Args:
+        row: A dict with keys "ftp_watts" and "weight_kg" (from Supabase), or None.
+
+    Returns:
+        An AthleteProfile whose defaults fill in any missing or NULL values.
+    """
+    if row is None:
+        return AthleteProfile()
+    kwargs: dict = {}
+    if row.get("ftp_watts") is not None:
+        kwargs["ftp_watts"] = row["ftp_watts"]
+    if row.get("weight_kg") is not None:
+        kwargs["weight_kg"] = float(row["weight_kg"])
+    return AthleteProfile(**kwargs)
+
+
+async def get_athlete_profile(telegram_user_id: int) -> AthleteProfile:
+    """
+    Fetch the athlete profile for a Telegram user, or return defaults if absent.
+
+    No row in the DB is not an error — it means the user hasn't customised their
+    profile yet. In that case we return AthleteProfile() whose field defaults
+    (ftp_watts=293, weight_kg=74.0) serve as the fallback.
+
+    Args:
+        telegram_user_id: The Telegram user to look up.
+
+    Returns:
+        An AthleteProfile populated from the DB row, or the default profile.
+    """
+    client = await _get_client()
+    response = (
+        await client.table("athlete_profile")
+        .select("ftp_watts, weight_kg")
+        .eq("telegram_user_id", telegram_user_id)
+        .limit(1)
+        .execute()
+    )
+    row = response.data[0] if response.data else None
+    return _row_to_athlete_profile(row)
+
+
+async def upsert_athlete_profile(
+    telegram_user_id: int,
+    ftp_watts: int | None = None,
+    weight_kg: float | None = None,
+) -> AthleteProfile:
+    """
+    Create or update the athlete profile, updating only the fields provided.
+
+    Calling with only ftp_watts= leaves weight_kg unchanged in the DB (and
+    vice versa). At least one field must be non-None for the upsert to make
+    sense, but the function doesn't enforce that — the caller should validate.
+
+    Args:
+        telegram_user_id: The Telegram user whose profile to upsert.
+        ftp_watts: New FTP in watts, or None to leave unchanged.
+        weight_kg: New body weight in kg, or None to leave unchanged.
+
+    Returns:
+        The updated AthleteProfile as read back from the DB.
+    """
+    fields: dict = {"telegram_user_id": telegram_user_id, "updated_at": "now()"}
+    if ftp_watts is not None:
+        fields["ftp_watts"] = ftp_watts
+    if weight_kg is not None:
+        fields["weight_kg"] = weight_kg
+
+    client = await _get_client()
+    response = (
+        await client.table("athlete_profile")
+        .upsert(fields, on_conflict="telegram_user_id")
+        .execute()
+    )
+    row = response.data[0] if response.data else None
+    return _row_to_athlete_profile(row)
